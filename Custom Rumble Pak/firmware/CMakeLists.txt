@@ -7,6 +7,11 @@ project(n64_rumble C CXX ASM)
 
 pico_sdk_init()
 
+# Bench bring-up option: USB-CDC logging of bus writes + a heartbeat.
+# Do NOT enable for the finished pak (no USB host, wastes power).
+#   cmake -B build -S . -DRUMBLE_DEBUG=ON
+option(RUMBLE_DEBUG "Enable USB-CDC debug logging" OFF)
+
 add_executable(n64_rumble
     main.c
 )
@@ -18,6 +23,13 @@ target_link_libraries(n64_rumble
     pico_stdlib
     hardware_pio
 )
+
+if (RUMBLE_DEBUG)
+    target_compile_definitions(n64_rumble PRIVATE RUMBLE_DEBUG=1)
+    pico_enable_stdio_usb(n64_rumble 1)   # log over USB CDC
+    pico_enable_stdio_uart(n64_rumble 0)
+    message(STATUS "n64_rumble: RUMBLE_DEBUG build (USB-CDC logging enabled)")
+endif()
 
 # Produce .uf2 / .elf / .bin etc.
 pico_add_extra_outputs(n64_rumble)

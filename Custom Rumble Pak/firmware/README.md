@@ -55,6 +55,25 @@ cmake --build build
 
 Output: `build/n64_rumble.uf2`.
 
+### Debug build (USB logging) — for bench bring-up
+
+```sh
+cmake -B build_dbg -S . -DRUMBLE_DEBUG=ON
+cmake --build build_dbg
+```
+
+This enables USB-CDC stdio and logs **every bus write** — region (`SAVE` / `ID` /
+`MOTOR`), data byte, the `/CE` `/OE` `/WE` strobe levels, and the resulting motor
+state — plus a 1 Hz `[hb]` heartbeat so you can confirm the firmware is alive even
+with no bus activity. Open the serial port (e.g. `minicom`, `tio`, `screen`) at any
+baud (USB-CDC ignores it).
+
+`stdio_init_all()` does **not** block waiting for a host, so the pak still runs if
+nothing is connected — but **don't ship the debug build** in the finished pak (no USB
+host, wastes power). Flash the default (production) build for real use.
+
+For the physical hookup, see [`../WIRING.md`](../WIRING.md).
+
 ## Flash
 
 Hold **BOOTSEL**, plug the Pico into USB, copy the `.uf2` to the `RPI-RP2` drive.

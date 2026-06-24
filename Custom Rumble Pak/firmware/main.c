@@ -1,9 +1,9 @@
 /*
  * N64 Rumble Pak emulation on the controller accessory bus (RP2040).
  *
- * See ../DESIGN.md for the full design. In short: this board is stripped to the
- * bare edge connector of a donor Controller Pak; the RP2040 sits on the bus and
- * behaves like a rumble pak:
+ * See ../DESIGN.md for the full design and ../WIRING.md for the solder map.
+ * In short: this board is stripped to the bare edge connector of a donor
+ * Controller Pak; the RP2040 sits on the bus and behaves like a rumble pak:
  *
  *   - Read responder (PIO, autonomous): drive 0x80 on every read so the
  *     console's detection probe sees a rumble pak.
@@ -14,6 +14,11 @@
  * from the console 3.3V rail. DETECT (EC1 pin 14) is tied to our own 3V3 OUT in
  * hardware (not handled here).
  *
+ * Build options:
+ *   -DRUMBLE_DEBUG=ON  ->  USB-CDC logging of every bus write + a heartbeat.
+ *                          For bench bring-up only; do NOT flash this into the
+ *                          finished pak (no USB host, wastes power).
+ *
  * STATUS: draft. The bus timing (read window, write data-valid point) must be
  * validated on real hardware with a logic analyzer before this is trusted.
  */
@@ -22,7 +27,11 @@
 #include "hardware/pio.h"
 #include "n64_rumble.pio.h"
 
-/* ---- Pin map (must match n64_rumble.pio) ---- */
+#ifdef RUMBLE_DEBUG
+#include <stdio.h>
+#endif
+
+/* ---- Pin map (must match n64_rumble.pio and ../WIRING.md) ---- */
 #define PIN_D0     0    /* GP0..GP7  = D0..D7 data bus            */
 #define PIN_CE     8    /* /CE  (active low)                      */
 #define PIN_OE     9    /* /OE  (active low) read strobe          */
@@ -37,6 +46,16 @@
 #define SNAPSHOT_BITS 20  /* GP0..GP19 captured by the write SM   */
 
 #define ID_READ_VALUE 0x80u  /* value returned on reads (D7 high) */
+
+/* Decode whether a snapshot targets the motor region and what D0 is. */
+static inline bool is_motor_write(uint32_t s, bool *d0_out) {
+    bool ce  = (s >> PIN_CE)  & 1u;   /* 0 = chip enabled                 */
+    bool a14 = (s >> PIN_A14) & 1u;
+    bool a15 = (s >> PIN_A15) & 1u;
+    *d0_out  = (s >> PIN_D0)  & 1u;   /* 0x01 -> on, 0x00 -> off          */
+    /* Motor region 0xC000-0xFFFF == A15=1 && A14=1, with /CE asserted.   */
+    return (!ce && a15 && a14);
+}
 
 static void init_read_sm(PIO pio, uint sm, uint offset) {
     pio_sm_config c = n64_read_program_get_default_config(offset);
@@ -67,6 +86,16 @@ static void init_write_sm(PIO pio, uint sm, uint offset) {
     pio_sm_set_enabled(pio, sm, true);
 }
 
+#ifdef RUMBLE_DEBUG
+static const char *region_name(uint32_t s) {
+    bool a14 = (s >> PIN_A14) & 1u;
+    bool a15 = (s >> PIN_A15) & 1u;
+    if (a15 && a14)  return "MOTOR";   /* 0xC000-0xFFFF */
+    if (a15 && !a14) return "ID";      /* 0x8000-0xBFFF */
+    return "SAVE";                     /* 0x0000-0x7FFF */
+}
+#endif
+
 int main(void) {
     /* Strobe + address lines are inputs the PIO reads. Plain SIO inputs are
      * fine -- PIO `wait gpio` / `in pins` sample the pad regardless of funcsel. */
@@ -90,19 +119,50 @@ int main(void) {
     init_read_sm(pio, sm_read, off_read);
     init_write_sm(pio, sm_write, off_write);
 
-    /* The read responder runs entirely in PIO. This loop only services writes,
-     * blocking (and idling the core) until a write snapshot arrives. */
+#ifndef RUMBLE_DEBUG
+    /* Production: the read responder runs entirely in PIO. This loop only
+     * services writes, blocking (and idling the core) until one arrives. */
     while (true) {
         uint32_t s = pio_sm_get_blocking(pio, sm_write);  /* GP0..GP19 */
-
-        bool ce  = (s >> PIN_CE)  & 1u;   /* 0 = chip enabled        */
-        bool a14 = (s >> PIN_A14) & 1u;
-        bool a15 = (s >> PIN_A15) & 1u;
-        bool d0  = (s >> PIN_D0)  & 1u;   /* 0x01 -> on, 0x00 -> off */
-
-        /* Motor region 0xC000-0xFFFF == A15=1 && A14=1, with /CE asserted */
-        if (!ce && a15 && a14) {
+        bool d0;
+        if (is_motor_write(s, &d0)) {
             gpio_put(PIN_MOTOR, d0);
         }
     }
+#else
+    /* Debug: USB-CDC logging. stdio_init_all() does NOT block waiting for a
+     * host, so the pak still works if nothing is connected. We poll the write
+     * FIFO (so we can also emit a heartbeat) and log every snapshot. */
+    stdio_init_all();
+    printf("\nN64 rumble pak firmware (DEBUG build) up. Waiting for bus...\n");
+
+    absolute_time_t next_hb = make_timeout_time_ms(1000);
+    uint32_t writes = 0;
+    bool motor = false;
+
+    while (true) {
+        while (!pio_sm_is_rx_fifo_empty(pio, sm_write)) {
+            uint32_t s = pio_sm_get(pio, sm_write);
+            bool d0;
+            if (is_motor_write(s, &d0)) {
+                gpio_put(PIN_MOTOR, d0);
+                motor = d0;
+            }
+            writes++;
+            printf("WR %-5s data=0x%02X  CE=%u OE=%u WE=%u  A15=%u A14=%u  motor=%u\n",
+                   region_name(s),
+                   (unsigned)(s & 0xFFu),
+                   (unsigned)((s >> PIN_CE) & 1u),
+                   (unsigned)((s >> PIN_OE) & 1u),
+                   (unsigned)((s >> PIN_WE) & 1u),
+                   (unsigned)((s >> PIN_A15) & 1u),
+                   (unsigned)((s >> PIN_A14) & 1u),
+                   (unsigned)motor);
+        }
+        if (absolute_time_diff_us(get_absolute_time(), next_hb) <= 0) {
+            printf("[hb] alive  writes=%lu  motor=%u\n", (unsigned long)writes, (unsigned)motor);
+            next_hb = make_timeout_time_ms(1000);
+        }
+    }
+#endif
 }

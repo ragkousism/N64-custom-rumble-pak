@@ -224,7 +224,9 @@ Two PIO state machines on one RP2040 (decode is just A14 + A15 + data + strobes)
 Low-power: clock-down / dormant between accesses to limit idle battery drain.
 
 A first draft of this firmware lives in [`firmware/`](firmware/) (two PIO programs +
-the CPU motor-decode loop, with the hardware-validation points called out).
+the CPU motor-decode loop, with the hardware-validation points called out). The exact
+solder map — every EC1 pin to its Pico pin, plus the motor stage — is in
+[`WIRING.md`](WIRING.md).
 
 ## Rumble protocol (resolved)
 
