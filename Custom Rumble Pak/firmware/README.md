@@ -74,6 +74,24 @@ host, wastes power). Flash the default (production) build for real use.
 
 For the physical hookup, see [`../WIRING.md`](../WIRING.md).
 
+### Motor PWM (intensity + soft-start) — optional
+
+By default the motor is plain on/off. Enable hardware PWM on GP22 to cap rumble
+strength and/or soften the inrush current:
+
+```sh
+cmake -B build -S . -DRUMBLE_PWM=ON -DRUMBLE_DUTY=80 -DRUMBLE_SOFTSTART_MS=3
+```
+
+- `RUMBLE_DUTY` (1–100, default 100) — duty-cycle cap when rumbling. Lower = weaker
+  rumble and less current draw.
+- `RUMBLE_SOFTSTART_MS` (default 0) — ramp-up time when the motor turns on; eases the
+  current spike that can sag the shared battery toward the Pico's brown-out point.
+
+PWM runs at ~25 kHz (above audible). Note it can only scale the motor **down** — it
+cannot boost the ~2.4 V NiMH pack above its voltage. The options combine freely with
+`RUMBLE_DEBUG`. All variants build to a `.uf2`.
+
 ## Flash
 
 Hold **BOOTSEL**, plug the Pico into USB, copy the `.uf2` to the `RPI-RP2` drive.

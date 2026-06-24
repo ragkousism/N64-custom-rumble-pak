@@ -31,5 +31,19 @@ if (RUMBLE_DEBUG)
     message(STATUS "n64_rumble: RUMBLE_DEBUG build (USB-CDC logging enabled)")
 endif()
 
+# Motor PWM: intensity cap + soft-start (instead of plain on/off).
+#   cmake -B build -S . -DRUMBLE_PWM=ON -DRUMBLE_DUTY=80 -DRUMBLE_SOFTSTART_MS=3
+option(RUMBLE_PWM "Drive the motor with PWM (intensity + soft-start)" OFF)
+set(RUMBLE_DUTY "100" CACHE STRING "PWM duty percent when rumbling (1-100)")
+set(RUMBLE_SOFTSTART_MS "0" CACHE STRING "Soft-start ramp time in ms (0 = off)")
+if (RUMBLE_PWM)
+    target_compile_definitions(n64_rumble PRIVATE
+        RUMBLE_PWM=1
+        RUMBLE_DUTY=${RUMBLE_DUTY}
+        RUMBLE_SOFTSTART_MS=${RUMBLE_SOFTSTART_MS})
+    target_link_libraries(n64_rumble hardware_pwm)
+    message(STATUS "n64_rumble: RUMBLE_PWM build (duty=${RUMBLE_DUTY}%, soft-start=${RUMBLE_SOFTSTART_MS}ms)")
+endif()
+
 # Produce .uf2 / .elf / .bin etc.
 pico_add_extra_outputs(n64_rumble)

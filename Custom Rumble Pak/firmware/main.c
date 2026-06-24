@@ -15,9 +15,13 @@
  * hardware (not handled here).
  *
  * Build options:
- *   -DRUMBLE_DEBUG=ON  ->  USB-CDC logging of every bus write + a heartbeat.
- *                          For bench bring-up only; do NOT flash this into the
- *                          finished pak (no USB host, wastes power).
+ *   -DRUMBLE_DEBUG=ON   USB-CDC logging of every bus write + a heartbeat.
+ *                       Bench bring-up only; do NOT flash into the finished pak.
+ *   -DRUMBLE_PWM=ON     Drive the motor with hardware PWM instead of on/off:
+ *       -DRUMBLE_DUTY=<1..100>        rumble strength as a duty-cycle cap (def 100)
+ *       -DRUMBLE_SOFTSTART_MS=<ms>    ramp-up time to soften inrush (def 0 = off)
+ *     PWM can only scale the motor DOWN (it cannot boost the ~2.4V NiMH pack);
+ *     it is for limiting strength/current and easing inrush, not raising voltage.
  *
  * STATUS: draft. The bus timing (read window, write data-valid point) must be
  * validated on real hardware with a logic analyzer before this is trusted.
@@ -26,6 +30,19 @@
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 #include "n64_rumble.pio.h"
+
+#ifdef RUMBLE_PWM
+#include "hardware/pwm.h"
+#ifndef RUMBLE_DUTY
+#define RUMBLE_DUTY 100
+#endif
+#ifndef RUMBLE_SOFTSTART_MS
+#define RUMBLE_SOFTSTART_MS 0
+#endif
+#define PWM_WRAP    999u                                  /* 1000 counts        */
+#define PWM_CLKDIV  5.0f                                  /* 125M/5/1000 = 25kHz */
+#define DUTY_LEVEL  ((uint16_t)((RUMBLE_DUTY) * 10u))     /* pct -> 0..1000      */
+#endif
 
 #ifdef RUMBLE_DEBUG
 #include <stdio.h>
@@ -46,6 +63,45 @@
 #define SNAPSHOT_BITS 20  /* GP0..GP19 captured by the write SM   */
 
 #define ID_READ_VALUE 0x80u  /* value returned on reads (D7 high) */
+
+/* ---- Motor control (plain on/off, or PWM if RUMBLE_PWM) ---- */
+
+static void motor_init(void) {
+#ifdef RUMBLE_PWM
+    gpio_set_function(PIN_MOTOR, GPIO_FUNC_PWM);
+    uint slice = pwm_gpio_to_slice_num(PIN_MOTOR);
+    pwm_set_wrap(slice, PWM_WRAP);
+    pwm_set_clkdiv(slice, PWM_CLKDIV);
+    pwm_set_gpio_level(PIN_MOTOR, 0);     /* off */
+    pwm_set_enabled(slice, true);
+#else
+    gpio_init(PIN_MOTOR);
+    gpio_put(PIN_MOTOR, 0);
+    gpio_set_dir(PIN_MOTOR, GPIO_OUT);
+#endif
+}
+
+static void motor_set(bool on) {
+#ifdef RUMBLE_PWM
+    static uint16_t cur = 0;
+    uint16_t target = on ? DUTY_LEVEL : 0;
+#if RUMBLE_SOFTSTART_MS > 0
+    if (on && cur < target) {                /* ramp up only */
+        const int steps = 32;
+        for (int i = 1; i <= steps; i++) {
+            pwm_set_gpio_level(PIN_MOTOR, (uint16_t)((uint32_t)target * i / steps));
+            sleep_us((RUMBLE_SOFTSTART_MS * 1000u) / steps);
+        }
+        cur = target;
+        return;
+    }
+#endif
+    pwm_set_gpio_level(PIN_MOTOR, target);
+    cur = target;
+#else
+    gpio_put(PIN_MOTOR, on);
+#endif
+}
 
 /* Decode whether a snapshot targets the motor region and what D0 is. */
 static inline bool is_motor_write(uint32_t s, bool *d0_out) {
@@ -104,11 +160,9 @@ int main(void) {
         gpio_set_dir(p, GPIO_IN);
     }
 
-    /* Motor output, forced off at boot (a 100k gate pulldown also holds it off
-     * during the Hi-Z window before this runs). */
-    gpio_init(PIN_MOTOR);
-    gpio_put(PIN_MOTOR, 0);
-    gpio_set_dir(PIN_MOTOR, GPIO_OUT);
+    /* Motor output, off at boot (a 100k gate pulldown also holds it off during
+     * the window before this runs). */
+    motor_init();
 
     PIO pio = pio0;
     uint off_read  = pio_add_program(pio, &n64_read_program);
@@ -126,7 +180,7 @@ int main(void) {
         uint32_t s = pio_sm_get_blocking(pio, sm_write);  /* GP0..GP19 */
         bool d0;
         if (is_motor_write(s, &d0)) {
-            gpio_put(PIN_MOTOR, d0);
+            motor_set(d0);
         }
     }
 #else
@@ -145,7 +199,7 @@ int main(void) {
             uint32_t s = pio_sm_get(pio, sm_write);
             bool d0;
             if (is_motor_write(s, &d0)) {
-                gpio_put(PIN_MOTOR, d0);
+                motor_set(d0);
                 motor = d0;
             }
             writes++;
