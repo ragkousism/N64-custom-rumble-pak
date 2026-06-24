@@ -43,6 +43,15 @@ Because the bank-switch glue sits in the address/CE path, we will **not** rely o
 original SRAM to answer the rumble detection probe. The plan strips the board down to
 the **bare edge connector** and lets the MCU own the bus entirely.
 
+### Photos
+
+| Front (SRAM side) | Front (alt) | Back (battery / logic side) |
+|---|---|---|
+| ![front](photos/donor-board-front.jpg) | ![front-alt](photos/donor-board-front-alt.jpg) | ![back](photos/donor-board-back.jpg) |
+
+(Web-sized copies; the camera originals are ~200 MP and were downsized to keep the
+public repo lean.)
+
 ## EC1 — accessory port edge-connector pinout
 
 32-pin card edge (from the upstream KiCad schematic). Sorted by pin number:
@@ -106,6 +115,11 @@ logic chip (a few mA) and an RP2040 can pull 30–50 mA, risking a console brown
 - **Battery:** VSYS needs ≥ 1.8 V, so a single 1.5 V cell will not run the Pico. Use
   **at least 2 cells** (2×AA/AAA ≈ 3 V is ideal; a 3.7 V Li-ion also works). The motor
   runs at the pack voltage, so choose a motor rated for it.
+- **Motor:** an ERM rumble motor salvaged from a PlayStation (DualShock) controller is
+  a good fit — they are ~3 V nominal, which pairs with a 2-cell (≈3 V) pack. The large
+  "heavy" motor gives strong low-frequency rumble (higher stall current); the small
+  motor gives a lighter buzz. Either works; size the FET and PTC fuse to the chosen
+  motor's stall current.
 - **Common ground** between battery, Pico, and the console bus is mandatory.
 - Tradeoff: the Pico draws idle current from the battery even when not rumbling;
   mitigate in firmware (clock-down / dormant mode between bus accesses).
