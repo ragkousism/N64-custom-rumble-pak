@@ -1,0 +1,62 @@
+;
+; N64 Rumble Pak emulation on the controller accessory bus (RP2040 PIO)
+; ---------------------------------------------------------------------
+;
+; Pin map (configured from C in main.c):
+;   GP0..GP7   = D0..D7  (bidirectional data bus)
+;   GP8        = /CE     (chip enable, active low)
+;   GP9        = /OE     (read / output enable, active low)
+;   GP10       = /WE     (write enable, active low)
+;   GP11..GP15 = A0..A4  GP16 = A13  GP17 = A14  GP18 = A15  GP19 = A12
+;
+; Resolved protocol (see ../DESIGN.md "Rumble protocol"):
+;   * ID / probe  0x8000-0xBFFF (A15=1, A14=0): reads return 0x80 (D7 high).
+;   * Motor       0xC000-0xFFFF (A15=1, A14=1): write D0 -> motor (1=on, 0=off).
+;
+; NOTE: every value/edge here is timing-sensitive on the real bus. The exact
+; /OE->data window and /WE data-valid point are an open item to confirm with a
+; logic analyzer on hardware before trusting this in a game.
+
+; --------------------------------------------------------------------------
+; Read responder
+;
+; Whenever /OE is asserted (low) the console is reading the accessory. We drive
+; a fixed 0x80 onto D0..D7 and release the bus the instant /OE deasserts. A real
+; rumble pak (and the cheap clones) effectively forces 0x80 on *every* read via a
+; permanent D7 pull-up; we drive the exact value actively. The console only ever
+; reads the ID region on a rumble pak, so not address-gating the read is both
+; clone-accurate and keeps the critical path at a single instruction.
+;
+; The 0x80 data value is latched into the pin output register ONCE at startup;
+; the hot loop only flips the data-bus direction (drive vs Hi-Z).
+; --------------------------------------------------------------------------
+.program n64_read
+    pull block              ; OSR <- 0x00000080 (CPU pushes it once at startup)
+    out pins, 8             ; latch D0..D7 output register = 0x80 (dirs still input)
+.wrap_target
+    wait 0 gpio 9           ; /OE low  -> console is reading
+    mov osr, ~null          ; OSR = 0xFFFFFFFF
+    out pindirs, 8          ; D0..D7 -> outputs : drive 0x80 onto the bus
+    wait 1 gpio 9           ; /OE high -> read finished
+    mov osr, null           ; OSR = 0
+    out pindirs, 8          ; D0..D7 -> inputs  : release the bus (Hi-Z)
+.wrap
+
+; --------------------------------------------------------------------------
+; Write sampler
+;
+; On each /WE strobe, snapshot GP0..GP19 (data + strobes + low/region address)
+; and push it to the RX FIFO. The CPU decodes the motor region and D0. Writes
+; are not latency-critical, so the decode lives in C.
+;
+; We sample shortly after /WE goes low. The controller holds the write data
+; (0x00 / 0x01) stable for the cycle, so D0 is valid here -- but if hardware
+; bring-up shows flaky capture, move the sample to just before /WE rises.
+; --------------------------------------------------------------------------
+.program n64_write
+.wrap_target
+    wait 0 gpio 10  [3]     ; /WE low; small settle delay before sampling
+    in pins, 20            ; snapshot GP0..GP19 (D0..D7, /CE,/OE,/WE, A0..A4, A13..A15, A12)
+    push block             ; hand the snapshot to the CPU
+    wait 1 gpio 10         ; /WE high -> exactly one sample per write
+.wrap

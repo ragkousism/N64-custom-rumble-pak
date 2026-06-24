@@ -223,6 +223,9 @@ Two PIO state machines on one RP2040 (decode is just A14 + A15 + data + strobes)
 
 Low-power: clock-down / dormant between accesses to limit idle battery drain.
 
+A first draft of this firmware lives in [`firmware/`](firmware/) (two PIO programs +
+the CPU motor-decode loop, with the hardware-validation points called out).
+
 ## Rumble protocol (resolved)
 
 Confirmed from libdragon / qwertymodo, the bitbuilt CNT-NUS thread, and a practical
