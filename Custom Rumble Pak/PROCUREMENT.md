@@ -11,8 +11,10 @@ Legend: `[x]` have · `[~]` likely have / to confirm · `[ ]` need to source.
 - [~] Raspberry Pi Pico (RP2040) — plain Pico is fine (3.3 V, has PIO)
 - [~] DC vibration/rumble motor — salvaged from a PlayStation (DualShock) controller,
       ~3 V ERM. Confirm its stall current (sets FET + fuse).
-- [ ] Battery holder + cells — **≥2 cells (≥1.8 V for Pico VSYS)**; 2×AA ≈ 3 V suits
-      the PS motor
+- [ ] **2× AAA NiMH cells** (low-self-discharge / Eneloop-type) — ~2.4 V pack. Charged
+      externally (no onboard charger).
+- [ ] 2-cell battery holder + small on/off switch
+- [ ] Bulk cap for VSYS hold-up — 100–470 µF (motor-inrush brown-out protection)
 
 ## B. Motor driver stage
 

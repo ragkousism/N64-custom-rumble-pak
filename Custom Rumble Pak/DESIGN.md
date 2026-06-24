@@ -107,19 +107,39 @@ logic chip (a few mA) and an RP2040 can pull 30–50 mA, risking a console brown
                            +------> Motor+ (raw battery, switched by FET)
  Battery- -----------------------> common GND  -- tied to EC1 GND (pins 1, 17)
 
- EC1 3.3 V (pins 15, 31): leave UNCONNECTED to the Pico.
+ EC1 3.3 V (pins 15, 31): LEAVE FULLY UNCONNECTED. Nothing on our board touches the
+                          console 3.3 V rail — no power, no DETECT tie, nothing.
 ```
+
+**No N64 power, ever.** The console's 3.3 V rail is sized for a tiny logic chip and an
+RP2040 can brown it out / damage it. Our board never connects to EC1 pins 15/31. The
+only wires to the console are the **signal** lines (address, data, strobes, DETECT) and
+**GND**.
 
 - The Pico board's onboard regulator is a **buck-boost (RT6150), VSYS 1.8–5.5 V** — feed
   the battery into **VSYS** and it makes 3.3 V regardless. Do not also connect VBUS.
-- **Battery:** VSYS needs ≥ 1.8 V, so a single 1.5 V cell will not run the Pico. Use
-  **at least 2 cells** (2×AA/AAA ≈ 3 V is ideal; a 3.7 V Li-ion also works). The motor
-  runs at the pack voltage, so choose a motor rated for it.
-- **Motor:** an ERM rumble motor salvaged from a PlayStation (DualShock) controller is
-  a good fit — they are ~3 V nominal, which pairs with a 2-cell (≈3 V) pack. The large
-  "heavy" motor gives strong low-frequency rumble (higher stall current); the small
-  motor gives a lighter buzz. Either works; size the FET and PTC fuse to the chosen
-  motor's stall current.
+- **DETECT (EC1 pin 14):** drive it from **our own 3.3 V** (Pico `3V3 OUT`, pin 36) — not
+  from the console rail. This signals "accessory present" using our power, so the console
+  only detects the pak when our circuit is alive (clean dead-battery failure mode).
+- **Back-powering caveat:** make sure the Pico is **powered (battery in) whenever the pak
+  is inserted into a live N64.** If the Pico is unpowered while the console drives the bus
+  lines high, current can leak through the Pico's GPIO clamp diodes into its 3V3 rail. A
+  simple battery on/off switch (or just not inserting with a dead battery) avoids this.
+- **Battery (chosen): 2× NiMH** (~2.4 V nominal pack; ~2.7 V freshly charged, sagging
+  toward ~2.0 V near empty — all within VSYS range). Charged **externally** (no onboard
+  charge circuit). Use **low-self-discharge (Eneloop-type)** cells since the pak may sit
+  unused. Chosen size: **AAA** (best fit for a pak-sized shell).
+  - NiMH's low internal resistance is a plus here: it sources the motor's current spikes
+    with less sag, keeping VSYS away from the Pico's 1.8 V floor.
+- **Motor:** an ERM rumble motor salvaged from a PlayStation (DualShock) controller
+  (~3 V nominal). At 2.4 V it runs a little gentler than rated — acceptable, just softer
+  rumble (voltage can't be boosted in firmware). The large "heavy" motor gives strong
+  low-frequency rumble (higher stall current); the small motor a lighter buzz. Size the
+  FET and PTC fuse to the chosen motor's stall current.
+- **Shared-pack brown-out:** motor inrush/stall can momentarily sag the pack and reset
+  the Pico if VSYS dips below 1.8 V. Mitigate with a **bulk cap on VSYS** (e.g. 100–
+  470 µF) — and if needed a small **diode + cap hold-up** isolating the Pico rail from
+  the motor. NiMH's low ESR already helps.
 - **Common ground** between battery, Pico, and the console bus is mandatory.
 - Tradeoff: the Pico draws idle current from the battery even when not rumbling;
   mitigate in firmware (clock-down / dormant mode between bus accesses).
@@ -152,15 +172,12 @@ Data bus on **GP0–GP7 contiguous** so PIO can drive/read a byte in one instruc
 | A12 | 3 | GP19 | in |
 | MOTOR_EN | — | GP22 | out |
 | GND | 1, 17 | GND pins | — |
-| DETECT | 14 | *TBD (open item #2)* | — |
-| 3.3 V | 15, 31 | *unconnected* | — |
+| DETECT | 14 | *tie to Pico 3V3 OUT (pin 36) — our power, not the console's* | — |
+| 3.3 V | 15, 31 | *FULLY UNCONNECTED* | — |
 
-**Why only 8 of 16 address lines?** For rumble we need the 32-byte block offset
-(`A0–A4`) plus enough high bits to tell the regions apart: the ID/probe block and the
-motor block differ in `A14`, and `A15` marks "accessory region vs save region";
-`A12/A13` are guard bits. This leaves **GP20, GP21, GP26–GP28 free** for `A5–A11` if
-the confirmed protocol needs them. Final address set is locked once Open Item #1 is
-resolved.
+**Why only 8 of 16 address lines?** The resolved protocol (see below) shows the only
+region selectors that matter are **A14 and A15**; `A0–A4` (block offset) and `A12/A13`
+(guards) are kept only for robustness. This leaves **GP20, GP21, GP26–GP28 free**.
 
 - Add **33–100 Ω in series** on each bus line between EC1 and the Pico for
   contention/ESD protection — negligible at these speeds.
@@ -194,38 +211,77 @@ resolved.
 
 ## Firmware shape (sketch — to be finalized)
 
-Two PIO state machines on one RP2040:
+Two PIO state machines on one RP2040 (decode is just A14 + A15 + data + strobes):
 
-- **Write SM:** waits for `/CE` & `/WE` active, samples address + data, hands to the
-  CPU. CPU updates its model — an echo-shadow for the ID block, and the **motor bit →
-  GP22** for the control block.
-- **Read SM:** on `/CE` & `/OE` with an address in our region, drives `D0–D7` with a
-  precomputed value within the ~70 ns window, then tristates. PIO is what makes the
-  window achievable.
+- **Read SM:** on `/CE` & `/OE` with `A15=1, A14=0` (ID region `0x8000–0xBFFF`), drive
+  `D0–D7` = **`0x80`** (a *fixed* value — only D7 high — not an echo) within the ~70 ns
+  window, then tristate. PIO is what makes the window achievable. Reads elsewhere can be
+  ignored (no SRAM to emulate).
+- **Write SM:** on `/CE` & `/WE` with `A15=1, A14=1` (motor region `0xC000–0xFFFF`),
+  sample **D0** and set **MOTOR_EN (GP22)** accordingly (`1` = on, `0` = off). Writes
+  are not latency-critical.
 
 Low-power: clock-down / dormant between accesses to limit idle battery drain.
+
+## Rumble protocol (resolved)
+
+Confirmed from libdragon / qwertymodo, the bitbuilt CNT-NUS thread, and a practical
+build writeup (phoboslab). On the parallel accessory bus the MCU sees plain byte
+addresses `A0–A15`; the 5-bit address CRC and 32-byte block framing live on the joybus
+(console↔controller) side and never reach us.
+
+| Region | Address | A15 | A14 | Behaviour |
+|---|---|:--:|:--:|---|
+| Save RAM | `0x0000–0x7FFF` | 0 | – | Controller Pak only; we don't implement it |
+| **ID / probe** | `0x8000–0xBFFF` | 1 | 0 | **reads return `0x80`** (fixed; real HW uses a weak pull-up on D7) |
+| **Motor** | `0xC000–0xFFFF` | 1 | 1 | **write D0**: `0x01`=on, `0x00`=off |
+
+- **Detection:** the console writes `0xFE` to the `0x8000` block then reads it back —
+  a Memory Pak returns `0x00`, a Rumble Pak returns `0x80`. So we simply drive `0x80`
+  on any read in the ID region.
+- **Motor:** spec is on/off only (no speed). Games vary intensity by **PWM-ing the
+  motor across frames**; we just mirror D0 to the FET.
+- **DETECT (pin 14):** driven from our own 3.3 V (never the console rail) — see Power
+  architecture.
 
 ## Added-parts BOM
 
 RP2040 Pico · AO3400A FET · SS14/1N5819 Schottky · 100 Ω gate R + 100 kΩ pulldown ·
-~20× 33–100 Ω bus resistors · PTC fuse · 47–100 µF + 100 nF (motor) + 10 µF + 100 nF
-(VSYS) · 2-cell battery holder.
+~20× 33–100 Ω bus resistors · PTC fuse · 47–100 µF + 100 nF (motor) · 100–470 µF VSYS
+bulk + 10 µF + 100 nF (VSYS) · 2× NiMH cells (LSD/Eneloop) + 2-cell holder + on/off
+switch.
 
 ## Open Items
 
-1. **Exact ID-probe address + value, and motor-control address + bit.** Decides the
-   address decode, whether reads must *echo* the written value or can return a *fixed*
-   byte, and the final address-line set. Sources: libdragon rumble / controller-pak
-   code, and the bitbuilt.net controller-expansion-port thread cited by the upstream
-   schematic.
-2. **DETECT (EC1 pin 14) handling** — tied to GND/3.3 V, or driven? Confirm from the
-   bus docs and wire accordingly.
-3. Confirm the reduced address decode (A0–A4, A12–A15) is sufficient, or extend to the
-   reserved spare GPIO.
+Resolved (see [Rumble protocol](#rumble-protocol-resolved) and Power architecture):
+- ~~ID-probe + motor addresses/values~~ → ID read = `0x80` at `0x8000`; motor = D0 at
+  `0xC000`.
+- ~~DETECT pin handling~~ → drive pin 14 from our own 3.3 V (Pico pin 36); console
+  3.3 V rail left fully unconnected.
+- ~~Reduced address decode~~ → only A14/A15 needed; A0–A4, A12/A13 kept for robustness.
+
+Remaining:
+1. **Confirm the ~70 ns read window on real hardware** with a logic analyzer — measure
+   how long after `/OE` the controller latches data, to validate the PIO read timing.
+2. **PS-controller motor stall current** — sets the PTC fuse rating.
+3. **Bench-validate detection** with a real N64 + a rumble game (or a libdragon test).
+
+## Enclosure (future work)
+
+A custom 3D-printed shell comes **last**, once the internal layout (Pico + battery +
+motor placement) is fixed. Constraints to design around:
+
+- The **card-edge geometry is fixed** by the donor PCB — it must match the controller
+  slot (finger pitch, thickness, insertion depth). The shell keys off that edge.
+- **Motor mounting** wants a little damping, or the pak buzzes against the controller
+  instead of transmitting rumble.
+- **Battery access** — a **removable hatch** for the 2× NiMH cells (charged externally),
+  ideally with a small **on/off switch** on the pack (also avoids the back-power case).
 
 ## References
 
 - Upstream schematic: `../N64 Rumble Pak/` (this repo's fork parent, `Ugly-Mug/N64`).
-- N64 controller expansion-port pinout: bitbuilt.net forums (credited in the upstream
-  v2 schematic title block).
-- libdragon (N64 homebrew SDK) — authoritative for the accessory protocol.
+- N64 controller expansion-port pinout + DETECT: bitbuilt.net CNT-NUS thread (#4852),
+  cited in the upstream v2 schematic title block.
+- Rumble protocol (addresses/values): libdragon (`joybus_accessory`), and the phoboslab
+  build writeup "A Nintendo 64 Rumble Pak so Bad that it's Good" (2026).
