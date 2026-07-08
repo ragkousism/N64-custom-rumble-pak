@@ -102,8 +102,8 @@ Teensy 4.x / STM32F4 (FSMC) would also work; RP2040 is the cheapest and simplest
 logic chip (a few mA) and an RP2040 can pull 30–50 mA, risking a console brownout.
 
 ```
- Battery pack --[F1 fuse]--+-------------> Pico VSYS (pin 39)  -> onboard buck-boost makes 3.3 V
-   (>= 1.8 V, see note)    |
+ Battery pack --[F1 fuse]--+-------------> board Vin/VSYS  -> onboard regulator makes 3.3 V
+  (3x AAA NiMH, ~3.6 V)    |
                            +------> Motor+ (raw battery, switched by FET)
  Battery- -----------------------> common GND  -- tied to EC1 GND (pins 1, 17)
 
@@ -116,8 +116,18 @@ RP2040 can brown it out / damage it. Our board never connects to EC1 pins 15/31.
 only wires to the console are the **signal** lines (address, data, strobes, DETECT) and
 **GND**.
 
-- The Pico board's onboard regulator is a **buck-boost (RT6150), VSYS 1.8–5.5 V** — feed
-  the battery into **VSYS** and it makes 3.3 V regardless. Do not also connect VBUS.
+- **Board (chosen): YD-RP2040** (VCC-GND Studio, 2022-V1.3) — a Pico-compatible clone
+  with a **genuine RP2040 die** (RP2-B2). Verified running the debug firmware over
+  USB-CDC. Its `Vin` pin = Pico VSYS, `Vout` = VBUS (silkscreened on the back). Extras
+  that don't affect this design: 16 MB flash, WS2812 RGB LED on GP23, USR/RST buttons.
+  All GPIOs this project uses (GP0–GP19, GP22) are broken out.
+  - ⚠️ **Regulator: ME6217C33 LDO, not the genuine Pico's RT6150 buck-boost.** An LDO
+    only steps *down*: it needs ≳3.4 V in to hold 3.3 V out (dropout ~0.1 V). This is
+    why the battery is a **3-cell** pack, not the 2-cell a genuine Pico could run.
+    Below ~3.4 V in, the 3.3 V rail gracefully tracks the pack (the RP2040 itself runs
+    down to 1.8 V I/O) — but bus drive levels degrade, so treat a ~3.1 V pack as empty.
+  - If a genuine Pico (RT6150) is substituted later, a 2× AAA pack (~2.4 V) works and
+    the rest of the design is unchanged.
 - **DETECT (EC1 pin 14):** drive it from **our own 3.3 V** (Pico `3V3 OUT`, pin 36) — not
   from the console rail. This signals "accessory present" using our power, so the console
   only detects the pak when our circuit is alive (clean dead-battery failure mode).
@@ -125,21 +135,25 @@ only wires to the console are the **signal** lines (address, data, strobes, DETE
   is inserted into a live N64.** If the Pico is unpowered while the console drives the bus
   lines high, current can leak through the Pico's GPIO clamp diodes into its 3V3 rail. A
   simple battery on/off switch (or just not inserting with a dead battery) avoids this.
-- **Battery (chosen): 2× NiMH** (~2.4 V nominal pack; ~2.7 V freshly charged, sagging
-  toward ~2.0 V near empty — all within VSYS range). Charged **externally** (no onboard
-  charge circuit). Use **low-self-discharge (Eneloop-type)** cells since the pak may sit
-  unused. Chosen size: **AAA** (best fit for a pak-sized shell).
+- **Battery (chosen): 3× NiMH** (~3.6 V nominal pack; ~4.3 V freshly charged, ~3.1 V
+  near empty — sized for the YD-RP2040's LDO, which needs ≳3.4 V in). Charged
+  **externally** (no onboard charge circuit). Use **low-self-discharge (Eneloop-type)**
+  cells since the pak may sit unused. Chosen size: **AAA** (best fit for a pak-sized
+  shell; check the 3-cell holder still fits before committing to an enclosure layout).
   - NiMH's low internal resistance is a plus here: it sources the motor's current spikes
-    with less sag, keeping VSYS away from the Pico's 1.8 V floor.
+    with less sag, keeping the LDO input above dropout.
 - **Motor:** an ERM rumble motor salvaged from a PlayStation (DualShock) controller
-  (~3 V nominal). At 2.4 V it runs a little gentler than rated — acceptable, just softer
-  rumble (voltage can't be boosted in firmware). The large "heavy" motor gives strong
-  low-frequency rumble (higher stall current); the small motor a lighter buzz. Size the
-  FET and PTC fuse to the chosen motor's stall current.
-- **Shared-pack brown-out:** motor inrush/stall can momentarily sag the pack and reset
-  the Pico if VSYS dips below 1.8 V. Mitigate with a **bulk cap on VSYS** (e.g. 100–
-  470 µF) — and if needed a small **diode + cap hold-up** isolating the Pico rail from
-  the motor. NiMH's low ESR already helps.
+  (~3 V nominal). The 3-cell pack **over-drives** it (~3.6 V nominal, ~4.3 V fresh) —
+  build the firmware with the PWM duty cap (`-DRUMBLE_PWM=ON -DRUMBLE_DUTY=75`,
+  ≈ 3 V/3.6 V·100 ≈ 80 %; start a notch lower for a freshly charged pack) to bring
+  the effective drive back to spec. The large "heavy" motor gives strong low-frequency
+  rumble (higher stall current); the small motor a lighter buzz. Size the FET and PTC
+  fuse to the chosen motor's stall current.
+- **Shared-pack brown-out:** motor inrush/stall can momentarily sag the pack; once the
+  LDO input drops below ~3.4 V the 3.3 V rail follows it down. Mitigate with a **bulk
+  cap on the Vin node** (e.g. 100–470 µF) — and if needed a small **diode + cap
+  hold-up** isolating the Pico rail from the motor. NiMH's low ESR already helps, and
+  the PWM soft-start (`-DRUMBLE_SOFTSTART_MS`) eases the inrush spike.
 - **Common ground** between battery, Pico, and the console bus is mandatory.
 - Tradeoff: the Pico draws idle current from the battery even when not rumbling;
   mitigate in firmware (clock-down / dormant mode between bus accesses).

@@ -9,8 +9,12 @@ connect the console 3.3 V (EC1 pins 15/31) to anything.**
 ## Conventions
 
 - **EC1 pin** = pad on the stripped donor edge connector (32-pin card edge).
-- **Pico pin** = the physical header pin number (1–40) on a Raspberry Pi Pico.
+- **Pico pin** = the physical header pin number (1–40) on a genuine Raspberry Pi Pico.
 - **GPIO** = the RP2040 GP number the firmware uses.
+- **On the YD-RP2040 (the chosen board) ignore the "Pico pin" column** — its header
+  layout differs, but every pad is silkscreened with its GP number directly, so solder
+  by the **GPIO** column. Power pads: **Vin** (= VSYS), **3V3** (= 3V3 OUT), **GND**;
+  leave **Vout** (= VBUS) unconnected.
 - Before wiring, **confirm which end of the edge connector is pin 1** with a
   multimeter: EC1 pins 1 and 17 are GND — find them by continuity to the donor's
   ground plane, and number from there.
@@ -22,14 +26,14 @@ connect the console 3.3 V (EC1 pins 15/31) to anything.**
 
 | From | To | Notes |
 |---|---|---|
-| Battery + → PTC fuse → switch → **VBATT** node | Pico **VSYS** = pin **39** | 2× AAA NiMH (~2.4 V). Onboard buck-boost makes 3.3 V. |
+| Battery + → PTC fuse → switch → **VBATT** node | YD-RP2040 **Vin** pin (= Pico VSYS, pin 39) | **3× AAA NiMH** (~3.6 V) → onboard ME6217 LDO makes 3.3 V. (A genuine Pico's buck-boost would allow 2 cells — see DESIGN.md.) |
 | VBATT node | Motor stage (see §4) | motor runs off raw battery |
 | Battery − | Pico **GND** (pin 3/8/13/18/23/28/38) | common ground |
 | EC1 **1, 17** (GND) | Pico **GND** | tie console ground to common ground |
-| EC1 **14** (DETECT) | Pico **3V3 OUT** = pin **36** | signals "present" using *our* 3.3 V |
+| EC1 **14** (DETECT) | **3V3** pad (Pico: 3V3 OUT, pin 36) | signals "present" using *our* 3.3 V |
 | EC1 **15, 31** (3.3 V) | **leave unconnected** | never touch the console rail |
 
-Do **not** connect Pico **VBUS (pin 40)**.
+Do **not** connect Pico **VBUS (pin 40)** — on the YD-RP2040 that's the **Vout** pad.
 
 ## 2. Bus signals — REQUIRED (13 wires)
 

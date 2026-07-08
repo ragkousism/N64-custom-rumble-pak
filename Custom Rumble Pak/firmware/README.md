@@ -89,7 +89,7 @@ cmake -B build -S . -DRUMBLE_PWM=ON -DRUMBLE_DUTY=80 -DRUMBLE_SOFTSTART_MS=3
   current spike that can sag the shared battery toward the Pico's brown-out point.
 
 PWM runs at ~25 kHz (above audible). Note it can only scale the motor **down** — it
-cannot boost the ~2.4 V NiMH pack above its voltage. The options combine freely with
+cannot boost the NiMH pack above its voltage. The options combine freely with
 `RUMBLE_DEBUG`. All variants build to a `.uf2`.
 
 ## Flash
@@ -117,5 +117,6 @@ These are the open items the draft cannot resolve without a scope/logic analyzer
 
 - Lower the system clock for less idle battery draw (verify the read path still
   meets timing).
-- Drive the motor with PWM to soften/scale rumble, or to compensate for the ~2.4 V
-  NiMH pack vs the motor's ~3 V rating.
+- Drive the motor with PWM to soften/scale rumble, or to match the pack voltage to
+  the motor's ~3 V rating (cap the duty on a 3-cell pack; a 2-cell pack already
+  under-drives it).

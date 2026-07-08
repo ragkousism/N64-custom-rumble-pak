@@ -8,12 +8,17 @@ Legend: `[x]` have · `[~]` likely have / to confirm · `[ ]` need to source.
 ## A. Core parts
 
 - [x] Broken aftermarket Memory Pak (donor — for its edge connector + shell)
-- [~] Raspberry Pi Pico (RP2040) — plain Pico is fine (3.3 V, has PIO)
+- [x] RP2040 board — **YD-RP2040 clone (chosen)**: genuine RP2040 die, ME6217 LDO
+      (hence the 3-cell battery below), verified running the debug firmware. A second
+      board is inbound — keep it as a bench debug/probe board (or swap it in if it
+      turns out to be a genuine Pico and 2 cells fit the shell better).
 - [~] DC vibration/rumble motor — salvaged from a PlayStation (DualShock) controller,
-      ~3 V ERM. Confirm its stall current (sets FET + fuse).
-- [ ] **2× AAA NiMH cells** (low-self-discharge / Eneloop-type) — ~2.4 V pack. Charged
-      externally (no onboard charger).
-- [ ] 2-cell battery holder + small on/off switch
+      ~3 V ERM. Confirm its stall current (sets FET + fuse). Over-driven by the 3-cell
+      pack → use the firmware PWM duty cap (see DESIGN.md).
+- [ ] **3× AAA NiMH cells** (low-self-discharge / Eneloop-type) — ~3.6 V pack, sized
+      for the YD-RP2040's LDO (needs ≳3.4 V in). Charged externally (no onboard
+      charger).
+- [ ] 3-cell AAA battery holder + small on/off switch (check it fits the pak shell)
 - [ ] Bulk cap for VSYS hold-up — 100–470 µF (motor-inrush brown-out protection)
 
 ## B. Motor driver stage
@@ -47,7 +52,7 @@ Legend: `[x]` have · `[~]` likely have / to confirm · `[ ]` need to source.
 
 ## E. Test / firmware phase (not needed to start building)
 
-- [ ] micro-USB cable — flash the Pico
+- [x] USB-C cable — flash the YD-RP2040 (done once already)
 - [ ] Logic analyzer (cheap 8-ch is fine) or scope — observe the bus; confirm
       probe/motor addresses and timing
 - [ ] N64 + controller + a rumble game (or a libdragon rumble test) for end-to-end test

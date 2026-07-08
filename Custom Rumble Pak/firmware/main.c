@@ -20,7 +20,7 @@
  *   -DRUMBLE_PWM=ON     Drive the motor with hardware PWM instead of on/off:
  *       -DRUMBLE_DUTY=<1..100>        rumble strength as a duty-cycle cap (def 100)
  *       -DRUMBLE_SOFTSTART_MS=<ms>    ramp-up time to soften inrush (def 0 = off)
- *     PWM can only scale the motor DOWN (it cannot boost the ~2.4V NiMH pack);
+ *     PWM can only scale the motor DOWN (it cannot boost the NiMH pack voltage);
  *     it is for limiting strength/current and easing inrush, not raising voltage.
  *
  * STATUS: draft. The bus timing (read window, write data-valid point) must be
